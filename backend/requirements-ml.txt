@@ -1,0 +1,8 @@
+# Semantic retrieval + local models (recommended; large download)
+sentence-transformers>=3.0
+faiss-cpu>=1.8
+torch>=2.3
+transformers>=4.44
+# Optional alternative OCR engine (then set OCR_ENGINE=paddle):
+# paddleocr>=2.8
+# paddlepaddle>=2.6
