@@ -88,3 +88,36 @@ def apply(m: Measurement) -> Measurement:
     else:
         m.status, m.status_source = "unknown", "none"
     return m
+
+
+# ---------------------------------------------------------------------------------------------
+# Urgency (decided by code, never by the LLM). HEURISTIC: needs validation by a clinician.
+#   routine : inside the range printed in the report
+#   review  : no usable range (or low read-confidence): ask a doctor to review
+#   soon    : outside the range: show the report to a doctor within a few days
+#   prompt  : far outside the range: contact a doctor today / as soon as possible
+# "far outside" = further than PROMPT_BOUND_FRACTION of the nearest bound, or further than
+# PROMPT_WIDTH_FRACTION of the width of the range (so narrow ranges such as sodium or potassium are handled).
+# A proper per-test critical-value table should replace this before real clinical use.
+PROMPT_BOUND_FRACTION = 0.5
+PROMPT_WIDTH_FRACTION = 0.75
+
+
+def urgency(m: Measurement, min_conf: float = 0.5) -> str:
+    if m.status == "unknown" or m.confidence < min_conf:
+        return "review"
+    if m.status == "normal":
+        return "routine"
+    rng, v = m.reference_range, m.value
+    if rng is None or v is None:
+        return "soon"
+    bound = rng.low if m.status == "low" else rng.high
+    if bound is None:
+        return "soon"
+    dev = (bound - v) if m.status == "low" else (v - bound)
+    if dev <= 0:
+        return "soon"
+    width = (rng.high - rng.low) if (rng.low is not None and rng.high is not None) else None
+    if (bound and dev / abs(bound) >= PROMPT_BOUND_FRACTION) or (width and dev / width >= PROMPT_WIDTH_FRACTION):
+        return "prompt"
+    return "soon"

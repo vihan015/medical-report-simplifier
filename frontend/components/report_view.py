@@ -9,25 +9,41 @@ def _dir(rtl: bool) -> str:
     return ' dir="rtl"' if rtl else ""
 
 
-def explanation_card(item: dict, rtl: bool) -> None:
+SECTIONS = ("what_it_is", "what_it_means", "should_i_worry", "when_to_see_doctor")
+
+
+def explanation_card(item: dict, rtl: bool, labels: dict) -> None:
     attention = item["status"] in ("low", "high") or item["low_confidence"]
     ref = f" &nbsp;|&nbsp; Range in report: {html.escape(item['reference_range_text'])}" if item.get("reference_range_text") else ""
     meta = f"{html.escape(item['value_text'])} {html.escape(item['unit'])}{ref}".strip() if item["kind"] == "measurement" else ""
     badge = value_table.badge(item["status"], item["status_label"] or None) if item["kind"] == "measurement" else ""
+    d = _dir(rtl)
     warn = "".join(f"<div>{html.escape(line)}</div>" for line in item["warning"].splitlines() if line.strip())
-    st.markdown(
-        f'<div class="card{" attention" if attention else ""}"><h4>{html.escape(item["title"])} {badge}</h4>'
-        f'<div class="meta">{meta}</div><div class="body"{_dir(rtl)}>{html.escape(item["explanation"])}</div>'
-        f'{f"<div class=warning{_dir(rtl)}>{warn}</div>" if warn else ""}</div>', unsafe_allow_html=True)
+    parts = ""
+    for key in SECTIONS:
+        text = (item.get(key) or "").strip()
+        if text:
+            parts += (f'<div class="section"><div class="section-title"{d}>{html.escape(labels.get(key, key))}</div>'
+                      f'<div class="body"{d}>{html.escape(text)}</div></div>')
+    if not parts:  # prescription lines and plain-fact fallback
+        parts = f'<div class="body"{d}>{html.escape(item["explanation"])}</div>'
+    else:
+        parts = f'<div class="muted"{d}>{html.escape(item["explanation"])}</div>' + parts
+    warn_html = f'<div class="warning"{d}>{warn}</div>' if warn else ""
+    st.markdown(f'<div class="card{" attention" if attention else ""}"><h4>{html.escape(item["title"])} {badge}</h4>'
+                f'<div class="meta">{meta}</div>{warn_html}{parts}</div>', unsafe_allow_html=True)
 
 
 def render(result: dict, extraction_text: str | None, rtl: bool) -> None:
     safety_notice.render(result["disclaimer"] if result["language"] != "en" else None)
+    labels = result.get("section_labels") or {}
+    if result.get("emergency_note"):
+        st.markdown(f'<div class="notice"{_dir(rtl)}><b>!</b> {html.escape(result["emergency_note"])}</div>', unsafe_allow_html=True)
 
     if result["fallback_used"]:
-        st.markdown('<div class="notice-secondary"><b>Plain facts only.</b> A full explanation could not be verified as safe '
-                    f"for this report, so only the extracted facts are shown. Reason: {html.escape(result['fallback_reason'])}</div>",
-                    unsafe_allow_html=True)
+        st.markdown(f'<div class="notice-secondary"><b>{result["template_items"]} item(s) show basic information only.</b> '
+                    "A full explanation for these could not be verified as safe. They still show the status and when to see a doctor. "
+                    f"{html.escape(result['fallback_reason'])}</div>", unsafe_allow_html=True)
 
     st.subheader("Report summary")
     n_m, n_p = len(result["measurements"]), len(result["prescription_items"])
@@ -45,18 +61,18 @@ def render(result: dict, extraction_text: str | None, rtl: bool) -> None:
         st.subheader("Values outside the report range")
         for it in result["items"]:
             if it["kind"] == "measurement" and it["status"] in ("low", "high"):
-                explanation_card(it, rtl)
+                explanation_card(it, rtl, labels)
 
     st.subheader("Explanation")
     for it in result["items"]:
         if it["kind"] == "measurement" and it["status"] not in ("low", "high"):
-            explanation_card(it, rtl)
+            explanation_card(it, rtl, labels)
 
     rx = [i for i in result["items"] if i["kind"] == "prescription"]
     if rx:
         st.subheader("Prescription, as written")
         for it in rx:
-            explanation_card(it, rtl)
+            explanation_card(it, rtl, labels)
 
     if result["questions_for_doctor"]:
         st.subheader("Questions you can ask your doctor")

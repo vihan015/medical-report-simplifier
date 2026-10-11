@@ -36,6 +36,7 @@ INSTR_RE = re.compile(r"\b(?:after food|before food|with food|empty stomach|at n
 _NAME_ONLY = re.compile(r"^[A-Za-z][A-Za-z0-9 ()/%.,+\-']{1,60}$")
 _VALUE_LINE = re.compile(rf"^(?:[<>]=?|≤|≥)?{NUM}$")
 _UNIT_LINE = re.compile(r"^\S{1,20}$")
+_CONTINUATION = re.compile(r"^[A-Za-z][A-Za-z0-9 ,.\-/]{0,45}\)$")
 
 
 def _stitch_lines(lines: list[str]) -> list[str]:
@@ -161,12 +162,27 @@ def extract_structured(report_id: str, pages: list[tuple[int, str, str, Optional
         all_text.append(text)
         src_conf = ocr_conf if (method != "native" and ocr_conf is not None) else 1.0
         lines = _stitch_lines([ln.strip() for ln in text.splitlines() if ln.strip()])
-        for ln in lines:
+        prev_plain, i = "", 0
+        while i < len(lines):
+            ln = lines[i]
+            i += 1
             if p := _try_prescription(ln, len(rx) + 1):
                 rx.append(p)
+                prev_plain = ""
                 continue
             if m := _try_measurement(ln, len(measurements) + 1, page_no, src_conf):
+                # Table cells that wrap over several lines: "Total Bilirubin" / "(Diazotization with 0.60 mg/dL ..." / "Sulfanilic Acid)"
+                if m.test_name.startswith("(") and prev_plain:
+                    m.test_name = sanitize_label(f"{prev_plain} {m.test_name}")
+                if m.test_name.count("(") > m.test_name.count(")") and i < len(lines) and _CONTINUATION.match(lines[i]):
+                    m.test_name = sanitize_label(f"{m.test_name} {lines[i]}")
+                    i += 1
+                elif m.test_name.count("(") > m.test_name.count(")"):
+                    m.test_name = m.test_name.rsplit("(", 1)[0].strip() or m.test_name
                 measurements.append(m)
+                prev_plain = ""
+            else:
+                prev_plain = ln if (_NAME_ONLY.match(ln) and "(" not in ln and len(ln) <= 40) else ""
     if not measurements and not rx:
         warnings.append("No lab measurements or prescription lines could be recognised in this document.")
     low = [m.test_name for m in measurements if m.confidence < 0.5]

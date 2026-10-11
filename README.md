@@ -38,3 +38,11 @@ Docker: `docker compose up --build`.
 - Have a clinician review `rag/documents/*.md` (drafts).
 - Have native speakers review outputs per language (tier 2 languages especially).
 - Grow `evaluation/datasets/test_cases.json` with real, anonymised reports.
+
+## What each test gets
+For every lab value: what the test is, what your result means, should I be worried, and when to see a doctor,
+all in the chosen language. "When to see a doctor" follows an urgency level decided by code
+(routine / review / soon / prompt) and lists emergency warning symptoms from the knowledge base.
+The urgency thresholds in `range_checker.py` are a heuristic and must be validated by a clinician.
+Tests are sent to the LLM in small batches (`LLM_BATCH_SIZE`); if one batch fails verification only those
+tests show the localised basic template, the rest keep their full explanation.

@@ -19,8 +19,9 @@ class Settings(BaseSettings):
     llm_model: str = ""
     llm_base_url: str = ""  # used by the "openai" provider (any OpenAI-compatible server)
     llm_temperature: float = 0.0
-    llm_max_tokens: int = 4096
+    llm_max_tokens: int = 8192
     llm_timeout_s: int = 120
+    llm_batch_size: int = 4  # tests explained per LLM call (keeps output short enough to never be cut off)
     llm_max_retries: int = 1  # regeneration attempts after a failed safety check
 
     # Independent second LLM pass that audits the generated text

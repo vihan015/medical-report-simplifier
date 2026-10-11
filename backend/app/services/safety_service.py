@@ -61,6 +61,13 @@ def prescription_numbers(p: PrescriptionItem) -> set[float]:
     return _nums_of(p.name, p.strength, p.frequency, p.duration, p.instructions, p.raw_line)
 
 
+TEXT_FIELDS = ("explanation", "what_it_is", "what_it_means", "should_i_worry", "when_to_see_doctor", "warning")
+
+
+def item_fields(it) -> list[tuple[str, str]]:
+    return [(f, getattr(it, f)) for f in TEXT_FIELDS] + [("back-translation", it.english_back_translation)]
+
+
 def _close(x: float, allowed: Iterable[float]) -> bool:
     return any(abs(x - a) < 1e-9 for a in allowed)
 
@@ -154,7 +161,7 @@ class SafetyService:
     # ------------------------------------------------------------------
     def validate(self, draft: Draft, facts: Facts, language: str, judge: Optional[JudgeResult] = None,
                  context_text: str = "", judge_required: bool = False, judge_error: str = "",
-                 check_script: bool = True) -> SafetyReport:
+                 check_script: bool = True, urgency: Optional[dict] = None, require_complete: bool = False) -> SafetyReport:
         v: list[Violation] = []
         metrics: dict[str, float] = {}
         by_id = {m.id: m for m in facts.measurements}
@@ -198,7 +205,7 @@ class SafetyService:
         for iid, it in items.items():
             if iid in by_id:
                 allowed = measurement_numbers(by_id[iid])
-                for where, t in (("explanation", it.explanation), ("warning", it.warning), ("back-translation", it.english_back_translation)):
+                for where, t in item_fields(it):
                     check_numbers(t, allowed, iid, where)
         for iid, it in rx_items.items():
             if iid in rx_by_id:
@@ -255,6 +262,18 @@ class SafetyService:
             r_ok += ok
         metrics["range_accuracy"] = r_ok / r_total if r_total else 1.0
 
+        # --- urgency accuracy and completeness of the four explanation parts ---
+        for iid, it in items.items():
+            if urgency and iid in urgency and it.claimed_urgency and it.claimed_urgency != urgency[iid]:
+                v.append(Violation(check="urgency_accuracy", item_id=iid,
+                                   detail=f"claimed_urgency '{it.claimed_urgency}' but the software urgency is '{urgency[iid]}'."))
+            if urgency and iid in urgency and require_complete and not it.claimed_urgency:
+                v.append(Violation(check="urgency_accuracy", item_id=iid, detail="claimed_urgency is missing."))
+            if require_complete and iid in by_id:
+                empty = [f for f in ("what_it_is", "what_it_means", "should_i_worry", "when_to_see_doctor") if not getattr(it, f).strip()]
+                if empty:
+                    v.append(Violation(check="incomplete_explanation", item_id=iid, detail="Missing parts: " + ", ".join(empty)))
+
         # --- abstention on low confidence / unknown status ---
         a_total = a_ok = 0
         for iid, it in items.items():
@@ -273,7 +292,8 @@ class SafetyService:
         native_texts: list[tuple[Optional[str], str]] = [(None, draft.overall_summary), (None, " ".join(draft.questions_for_doctor)), (None, draft.localized_disclaimer)]
         for it in draft.items:
             english_texts += [(it.id, it.english_back_translation)]
-            native_texts += [(it.id, it.explanation), (it.id, it.warning)]
+            native_texts += [(it.id, t) for _, t in item_fields(it)[:-1]]
+        native_texts += [(None, t) for t in list(draft.section_labels.values()) + [draft.localized_emergency_note]]
         for it in draft.prescription_items:
             english_texts += [(it.id, it.english_back_translation)]
             native_texts += [(it.id, it.explanation)]
@@ -307,7 +327,8 @@ class SafetyService:
         # --- output language / script ---
         lang = get_language(language)
         if check_script and lang.script:
-            body = " ".join(i.explanation for i in draft.items) + " " + draft.overall_summary
+            body = " ".join(i.explanation + " " + i.what_it_is + " " + i.what_it_means + " " + i.should_i_worry + " " + i.when_to_see_doctor
+                            for i in draft.items) + " " + draft.overall_summary
             body = re.sub(r"[A-Za-z0-9/%.,()\-\s]+", " ", body)  # ignore test names, units, numbers
             ratio = script_ratio(body, lang.script)
             metrics["script_ratio"] = ratio

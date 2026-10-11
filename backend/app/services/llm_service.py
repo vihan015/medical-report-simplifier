@@ -33,17 +33,30 @@ HARD RULES
 10. Write in the requested language with short sentences and everyday words. Explain meaning; do not translate word for word. Keep test names in their original form and you may add the local name in brackets.
 11. Every measurement id and prescription id in FACTS_JSON must appear exactly once in your output.
 12. If status is low or high, the "warning" field must say that the value is outside the range given in the report and that the report should be shown to a doctor. If status is unknown or low_confidence is true, "warning" must say that the value cannot be judged as low or high from this report and that a doctor should check it. Only for a normal, confident value leave "warning" empty.
-13. For each explanation also give "english_back_translation": a faithful English rendering of what you wrote.
-14. Output ONE JSON object and nothing else (no markdown fences)."""
+13. For each item also give "english_back_translation": a faithful English rendering of ALL the text you wrote for that item.
+14. For EVERY measurement write these parts in the target language, each 1-3 short sentences:
+   - "explanation": one factual sentence with the test name, the value with its unit, and the range printed in the report (if any).
+   - "what_it_is": what the test measures, taken from CONTEXT. If no passage covers this test, say that no approved explanation is available here and that the doctor can explain it.
+   - "what_it_means": say whether the value is inside, below or above the range printed in the report (copy status_decided_by_software). For low or high, you may add the general effects listed under "If low" / "If high" in CONTEXT, phrased with "can" or "may" and as general information, never as something the patient has. Say that the doctor decides what applies.
+   - "should_i_worry": an honest, calm answer. One value alone cannot show whether something is wrong. A value outside the range does not by itself mean a serious illness, but it should be reviewed by a doctor in the time frame given by urgency_decided_by_software. For a normal value say it is inside the range but the doctor still reads the whole report. Never say "nothing to worry about", never say a doctor visit is unnecessary, never alarm.
+   - "when_to_see_doctor": follow urgency_decided_by_software exactly: routine = discuss at the next routine visit; review = ask a doctor to review it; soon = show the report to a doctor within the next few days; prompt = contact a doctor today or as soon as possible. Then add, as "get emergency medical help immediately if ...", the symptoms listed under "Urgent symptoms" in CONTEXT (if any).
+   - "claimed_urgency": copy urgency_decided_by_software exactly.
+   Never add medicines, doses, diet, exercise, home remedies, or causes.
+15. Also output "section_labels" (the four headings what_it_is, what_it_means, should_i_worry, when_to_see_doctor translated into the target language: "What this test is", "What your result means", "Should I be worried?", "When to see a doctor") and "localized_emergency_note" (one sentence: get emergency medical help straight away for chest pain, trouble breathing, fainting, confusion, severe bleeding or sudden severe weakness, whatever the report says).
+16. Output ONE JSON object and nothing else (no markdown fences)."""
 
 OUTPUT_SCHEMA = """{
-  "overall_summary": "2-3 neutral sentences in the target language: how many values the report lists and which ones are outside the range printed in the report. No numbers other than those in FACTS_JSON.",
-  "overall_summary_en": "English rendering of overall_summary",
-  "items": [{"id": "m1", "claimed_status": "low|normal|high|unknown", "explanation": "...", "warning": "...", "english_back_translation": "..."}],
+  "overall_summary": "",
+  "overall_summary_en": "",
+  "items": [{"id": "m1", "claimed_status": "low|normal|high|unknown", "claimed_urgency": "routine|review|soon|prompt",
+             "explanation": "...", "what_it_is": "...", "what_it_means": "...", "should_i_worry": "...",
+             "when_to_see_doctor": "...", "warning": "...", "english_back_translation": "..."}],
   "prescription_items": [{"id": "p1", "explanation": "...", "english_back_translation": "..."}],
   "questions_for_doctor": ["up to 3 neutral questions the patient could ask their doctor, in the target language"],
   "questions_for_doctor_en": ["English rendering of the questions"],
-  "localized_disclaimer": "one sentence in the target language saying this is general information, not a diagnosis or treatment advice, and the doctor should be consulted"
+  "localized_disclaimer": "one sentence in the target language: general information, not a diagnosis or treatment advice, consult a doctor",
+  "localized_emergency_note": "...",
+  "section_labels": {"what_it_is": "...", "what_it_means": "...", "should_i_worry": "...", "when_to_see_doctor": "..."}
 }"""
 
 JUDGE_SYSTEM = """You are an independent safety auditor for patient-facing medical text. You receive TRUSTED FACTS and a TEXT written in another language. Be strict.
@@ -51,16 +64,19 @@ JUDGE_SYSTEM = """You are an independent safety auditor for patient-facing medic
 2. List every claim in the TEXT that is NOT supported by the FACTS or CONTEXT (unsupported_claims).
 3. List every statement that diagnoses, names a disease, suggests a cause, recommends/changes medicine, diet or treatment, or gives false reassurance (unsafe_claims).
 4. List every place where the TEXT contradicts the FACTS: wrong number, wrong unit, wrong low/high status (contradictions_with_facts).
-5. meaning_preserved = false if the TEXT changes, omits or distorts the meaning of the facts. fluency_score is 1-5.
+5. Advice to see a doctor, the timing of a doctor visit, and a list of emergency warning symptoms are SAFE and expected: do not report them. General effects of a low/high value phrased with can/may are safe if they appear in CONTEXT.
+6. meaning_preserved = false if the TEXT changes, omits or distorts the meaning of the facts. fluency_score is 1-5.
 Output ONE JSON object only: {"back_translation": "", "unsupported_claims": [], "unsafe_claims": [], "contradictions_with_facts": [], "meaning_preserved": true, "fluency_score": 5}"""
 
 
 def facts_payload(measurements: list[Measurement], prescriptions: list[PrescriptionItem], min_conf: float) -> dict:
+    from backend.app.services.range_checker import urgency
     return {
         "measurements": [{
             "id": m.id, "test_name": sanitize_label(m.test_name), "value": m.value_text, "unit": m.unit,
             "reference_range_in_report": m.reference_range_text or None, "status_decided_by_software": m.status,
             "report_flag": m.report_flag, "low_confidence": m.confidence < min_conf,
+            "urgency_decided_by_software": urgency(m, min_conf),
         } for m in measurements],
         "prescriptions": [{
             "id": p.id, "form": p.form, "name": p.name, "strength": p.strength, "frequency": p.frequency,
@@ -153,20 +169,29 @@ class MockProvider:
         lang = user.split("TARGET LANGUAGE: ", 1)[1].split("\n", 1)[0]
         items = []
         for m in facts["measurements"]:
-            st = m["status_decided_by_software"]
+            st, urg = m["status_decided_by_software"], m["urgency_decided_by_software"]
             unit = f" {m['unit']}" if m["unit"] else ""
             rng = f" The report range is {m['reference_range_in_report']}{unit}." if m["reference_range_in_report"] else ""
             exp = f"[mock {lang}] {m['test_name']}: {m['value']}{unit}.{rng}"
             warn = ("This value is outside the range given in your report. Please show this report to your doctor." if st in ("low", "high")
                     else "This value cannot be judged as low or high from this report. Please ask your doctor." if st == "unknown"
                     else "This value could not be read with confidence. Please ask your doctor." if m["low_confidence"] else "")
-            items.append({"id": m["id"], "claimed_status": st, "explanation": exp, "warning": warn, "english_back_translation": exp})
+            parts = {
+                "what_it_is": f"[mock {lang}] This test measures {m['test_name']}.",
+                "what_it_means": f"[mock {lang}] The value is {st} compared with the report range.",
+                "should_i_worry": "One value alone cannot show whether something is wrong. Please let your doctor review the report.",
+                "when_to_see_doctor": f"Urgency level: {urg}. Please discuss this with your doctor.",
+            }
+            back = " ".join([exp, *parts.values()])
+            items.append({"id": m["id"], "claimed_status": st, "claimed_urgency": urg, "explanation": exp, **parts,
+                          "warning": warn, "english_back_translation": back})
         rx = [{"id": p["id"], "explanation": f"[mock {lang}] The prescription says {p['name']} {p['strength']} {p['frequency']} {p['duration']}".strip() + ".",
                "english_back_translation": f"The prescription says {p['name']} {p['strength']} {p['frequency']} {p['duration']}".strip() + "."} for p in facts["prescriptions"]]
         return json.dumps({
             "overall_summary": f"[mock {lang}] Please review the values below with your doctor.", "overall_summary_en": "Please review the values below with your doctor.",
             "items": items, "prescription_items": rx, "questions_for_doctor": ["Can you explain these results to me?"],
             "questions_for_doctor_en": ["Can you explain these results to me?"], "localized_disclaimer": "",
+            "localized_emergency_note": "", "section_labels": {},
         })
 
 
@@ -199,9 +224,10 @@ class LLMService:
 
     def judge(self, language: str, facts: dict, draft: Draft, context: list[ContextChunk]) -> JudgeResult:
         texts = {"overall_summary": draft.overall_summary,
-                 "items": [{"id": i.id, "explanation": i.explanation, "warning": i.warning, "claimed_status": i.claimed_status} for i in draft.items],
+                 "items": [i.model_dump(exclude={"english_back_translation"}) for i in draft.items],
                  "prescription_items": [{"id": i.id, "explanation": i.explanation} for i in draft.prescription_items],
-                 "questions_for_doctor": draft.questions_for_doctor, "localized_disclaimer": draft.localized_disclaimer}
+                 "questions_for_doctor": draft.questions_for_doctor, "localized_disclaimer": draft.localized_disclaimer,
+                 "localized_emergency_note": draft.localized_emergency_note}
         user = (f"TEXT LANGUAGE: {get_language(language).name}\n\nTRUSTED FACTS:\n{json.dumps(facts, ensure_ascii=False)}\n\n"
                 f"CONTEXT:\n" + "\n".join(f"[{c.id}] {c.text}" for c in context) + f"\n\nTEXT:\n{json.dumps(texts, ensure_ascii=False)}")
         raw = self.provider.complete(JUDGE_SYSTEM, user)

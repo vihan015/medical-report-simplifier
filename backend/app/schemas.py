@@ -65,9 +65,14 @@ class ExtractionResult(BaseModel):
 class ItemExplanation(BaseModel):
     id: str
     claimed_status: Status = "unknown"
-    explanation: str = ""
+    claimed_urgency: str = ""  # routine | review | soon | prompt (must equal the software's urgency)
+    explanation: str = ""  # one short factual sentence: test, value, unit, report range
+    what_it_is: str = ""
+    what_it_means: str = ""
+    should_i_worry: str = ""
+    when_to_see_doctor: str = ""
     warning: str = ""
-    english_back_translation: str = ""
+    english_back_translation: str = ""  # faithful English rendering of ALL the fields above
 
 
 class PrescriptionExplanation(BaseModel):
@@ -84,6 +89,8 @@ class Draft(BaseModel):
     questions_for_doctor: list[str] = Field(default_factory=list)
     questions_for_doctor_en: list[str] = Field(default_factory=list)
     localized_disclaimer: str = ""
+    localized_emergency_note: str = ""
+    section_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class JudgeResult(BaseModel):
@@ -143,6 +150,11 @@ class DisplayItem(BaseModel):
     status_label: str = ""
     warning: str = ""
     explanation: str = ""
+    what_it_is: str = ""
+    what_it_means: str = ""
+    should_i_worry: str = ""
+    when_to_see_doctor: str = ""
+    urgency: str = "routine"
     source: Literal["llm", "template"] = "llm"
     low_confidence: bool = False
 
@@ -166,8 +178,11 @@ class SimplifyResponse(BaseModel):
     disclaimer_en: str
     references: list[ContextChunk] = Field(default_factory=list)
     safety: SafetyReport
-    fallback_used: bool = False
+    fallback_used: bool = False  # True if ANY item had to use the plain template
     fallback_reason: str = ""
+    template_items: int = 0
+    section_labels: dict[str, str] = Field(default_factory=dict)
+    emergency_note: str = ""
     attempts: int = 1
     model: str = ""
     measurements: list[Measurement] = Field(default_factory=list)

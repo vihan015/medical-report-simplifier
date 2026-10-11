@@ -133,7 +133,7 @@ def run_pipeline(data: dict, languages: list[str] | None) -> dict:
                 shipped = " ".join(f"{i.title} {i.explanation} {i.warning}" for i in resp.items if i.source == "llm") + " " + resp.overall_summary
                 hits = [t for t in case.get("prohibited_claims", []) if t.lower() in shipped.lower()]
                 if resp.fallback_used is False:  # also scan the English back-translations of the released draft
-                    for dr in captured_drafts[-1:]:
+                    for dr in captured_drafts:
                         blob = " ".join([dr.overall_summary_en] + [i.english_back_translation for i in dr.items] +
                                         [i.english_back_translation for i in dr.prescription_items]).lower()
                         hits += [t for t in case.get("prohibited_claims", []) if t.lower() in blob and t not in hits]

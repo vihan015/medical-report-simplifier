@@ -18,14 +18,24 @@ def evaluate(req: EvaluateRequest, db: Session = Depends(get_db)):
                          .order_by(models.GeneratedExplanation.pk.desc())).first()
         if not row:
             raise HTTPException(404, "No explanation stored for this report.")
-        resp = SimplifyResponse.model_validate_json(row.response_json)
+        import json
+
         from backend.app.schemas import Draft
+        from backend.app.services.range_checker import urgency
         from backend.app.services.safety_service import Facts
 
-        draft = Draft.model_validate_json(row.draft_json)
+        resp = SimplifyResponse.model_validate_json(row.response_json)
         pipeline = get_pipeline()
-        return pipeline.safety.validate(draft, Facts(resp.measurements, resp.prescription_items), resp.language,
-                                        check_script=pipeline.s.llm_provider != "mock")
+        reports = []
+        for b in json.loads(row.draft_json):
+            if not b["draft"]:
+                continue
+            ms = [m for m in resp.measurements if m.id in b["ids"]]
+            ps = [p for p in resp.prescription_items if p.id in b["ids"]]
+            reports.append(pipeline.safety.validate(
+                Draft.model_validate(b["draft"]), Facts(ms, ps), resp.language, check_script=pipeline.s.llm_provider != "mock",
+                urgency={m.id: urgency(m, pipeline.s.min_extraction_confidence) for m in ms}, require_complete=True))
+        return pipeline._merge_reports(reports)
     if req.draft is None:
         raise HTTPException(422, "Provide report_id or a draft.")
     return get_pipeline().evaluate(req)

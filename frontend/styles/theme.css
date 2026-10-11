@@ -40,3 +40,7 @@ table.facts tr:last-child td { border-bottom: none; }
 .muted { color: #666; font-size: 0.85rem; }
 
 @media (max-width: 640px) { .block-container { padding-left: 1rem; padding-right: 1rem; } table.facts { font-size: 0.85rem; } }
+
+.card .section { margin-top: 0.85rem; }
+.card .section-title { font-weight: 600; font-size: 0.82rem; color: #333; margin-bottom: 0.15rem; }
+.card .warning { border-top: none; border-left: 3px solid #111; background: #f4f4f4; padding: 0.5rem 0.7rem; margin: 0.4rem 0 0.2rem 0; }
